@@ -1,2 +1,2 @@
-# culture-classifier
-Repository for the first homework of the course Multilingual NLP course @LaSapienza
+# ocr-cleaning
+Repository for the second homework of the course Multilingual NLP course @LaSapienza
