@@ -9,31 +9,38 @@ import unicodedata
 import re
 
 model_name = "deepseek/deepseek-r1-0528:free"
+output_path_model = "deepseek" #serve per la cartella e file di output
+translation_version = "v7"
 
-PROMPT_TEMPLATE = """
-You are a highly precise text restoration model specialized in correcting text that has been corrupted by OCR scanning errors.
+PROMPT_TEMPLATE = """You are an expert OCR text restoration specialist. Your task is to fix OCR scanning errors while preserving the original text's integrity.
 
-You are given a passage that contains **typical OCR errors**, such as:
-- broken words or missing spaces
-- misrecognized letters or digits (e.g. "0" → "O", "1" → "l", "rn" → "m", "vv" → "w")
-- unwanted characters, Unicode artifacts, or symbols (e.g. "\u017f", smart quotes)
-- misspellings that clearly result from OCR noise (e.g. "corrvpl" → "corrupt", "haue" → "have")
-- false capitalization or inconsistent casing
-- missing or incorrect punctuation (e.g. “,” → ",", random hyphens or em dashes)
+COMMON OCR ERRORS TO FIX:
+• Character substitutions: O↔0, l↔1↔I, rn↔m, vv↔w, cl↔d, nn↔m, ci↔d
+• Broken words: "th is" → "this", "a nd" → "and", "w ord" → "word"  
+• Missing/extra spaces: "inthe" → "in the", "text .But" → "text. But"
+• Quote artifacts: \" → " (fix escaped quotes to normal quotes)
+• Case errors: random capitalization, missing capitals after periods
+• Artifacts: remove stray | ~ ` symbols and Unicode remnants
 
-You MUST:
-- Correct only what is clearly due to OCR or typographic noise.
-- **Preserve the original structure, style, and grammar**.
-- Do **NOT modernize the language**, paraphrase, or reinterpret.
-- Output the **corrected version of the text only**, with no explanation, no formatting, and no bullet points.
+PUNCTUATION PRESERVATION:
+• Keep em-dashes (—) as they are typical of 19th century literature
+• Fix only quote encoding errors: \"text\" → "text"
+• Preserve original dialogue formatting and complex punctuation patterns
 
-IMPORTANT:
-- Remove or normalize all Unicode artifacts.
-- Join broken words and fix spacing.
-- Fix words where OCR has inserted or swapped incorrect letters or numbers.
-- Restore original punctuation and capitalization as best as possible.
-- Keep line breaks and paragraphing consistent if found.
+CORRECTION EXAMPLES:
+"Th e qu ick br0wn f0x jvmps 0ver the |azy d0g." → "The quick brown fox jumps over the lazy dog."
+"lt was a dark st0rmy night.Sudcenly a sh0t rang 0ut!" → "It was a dark stormy night. Suddenly a shot rang out!"
+"The p0em 0f \"Thalaba,\" the vampyre c0rse" → "The poem of "Thalaba," the vampyre corse"
+"affecti0n.—A supp0siti0n alluded t0" → "affection.—A supposition alluded to"
 
+STRICT RULES:
+1. Fix ONLY obvious OCR errors - do NOT modernize, paraphrase, or interpret
+2. Preserve original grammar, vocabulary, and sentence structure exactly
+3. Maintain paragraph breaks and text formatting
+4. Keep em-dashes (—) and period-style literary punctuation intact
+5. Fix quote encoding (\" → ") but preserve quote placement and dialogue structure
+6. If uncertain about a correction, leave the text unchanged
+7. Output ONLY the corrected text with no explanations
 
 OCR text:
 {input_text}
@@ -42,20 +49,37 @@ Cleaned text:
 """
 
 def pre_clean_text(text):
-    # 1. Fix Unicode errors (quotes, dashes, accents)
+    # fix Unicode errors (quotes, dashes, accents)
     text = fix_text(text)
 
-    # 2. Normalize and remove non-ASCII
+    # normalize Unicode
     text = unicodedata.normalize("NFKD", text)
-    text = text.encode("ascii", "ignore").decode("ascii")
+    
+    # fix common OCR artifacts before LLM processing. TOCHECK: Maybe some of them must be keeped ?
+    ocr_replacements = {
+        # Ligatures comuni
+        'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl',
+        # Quote standardization
+        ''': "'", ''': "'", '"': '"', '"': '"',
+        '«': '"', '»': '"',
+        # Dashes
+        '–': '-', '—': '-', '…': '...',
+    }
+    
+    for old, new in ocr_replacements.items():
+        text = text.replace(old, new)
 
-    # 3. (Optional) Remove garbage characters like long dashes, artifacts
-    text = re.sub(r"[^a-zA-Z0-9\s.,;:'\"!?()\[\]\-–—]", "", text)
+    # remove control characters but keep the line breaks
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+    
+    # clean up garbage patterns
+    text = re.sub(r"[^\w\s.,;:'\"!?()\[\]\-]", "", text)
 
-    # 4. Normalize spacing
-    text = re.sub(r"\s+", " ", text).strip()
+    # normalize spacing 
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)  # Max 2 consecutive newlines
 
-    return text
+    return text.strip()
 
 def load_api_key(path="key.txt"):
     with open(path, "r") as f:
@@ -66,39 +90,88 @@ API_KEY = load_api_key()
 def estimate_tokens(text, chars_per_token=4):
     return len(text) // chars_per_token
 
-def split_text_by_token_estimate(text, max_tokens, chars_per_token=4):
+def split_text_by_paragraphs(text, max_tokens, chars_per_token=4):
+    #Now the chunk respect also the paragraphs,
     max_chars = max_tokens * chars_per_token
     chunks = []
-    current = ""
-
-    for line in text.splitlines():
-        if not line.strip():
+    
+    paragraphs = text.split('\n\n')     #split in paragraphs
+    current_chunk = ""
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
             continue
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) <= max_chars:
-            current = candidate
+            
+        # If this paragraph is added, the total length will exceed max_chars?    
+        test_chunk = f"{current_chunk}\n\n{para}" if current_chunk else para
+        
+        if len(test_chunk) <= max_chars:
+            current_chunk = test_chunk
         else:
-            chunks.append(current.strip())
-            current = line
-    if current:
-        chunks.append(current.strip())
-
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # If the single par is too long, split it into sentences
+            if len(para) > max_chars:
+                sentences = re.split(r'(?<=[.!?])\s+', para)
+                temp_chunk = ""
+                
+                for sent in sentences:
+                    if len(f"{temp_chunk} {sent}".strip()) <= max_chars:
+                        temp_chunk = f"{temp_chunk} {sent}".strip()
+                    else:
+                        if temp_chunk:
+                            chunks.append(temp_chunk)
+                        temp_chunk = sent
+                
+                if temp_chunk:
+                    current_chunk = temp_chunk
+                else:
+                    current_chunk = ""
+            else:
+                current_chunk = para
+    
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
     return chunks
+
+def post_process_final_text(text):
+    """Post-processing per migliorare la coerenza finale"""
+    #normalize spaces after punctuation
+    text = re.sub(r'([.!?])\s*([A-Z])', r'\1 \2', text)
+    text = re.sub(r'([,;:])\s*([a-zA-Z])', r'\1 \2', text)
+    
+    #fix spaces before punctuation
+    text = re.sub(r'\s+([.!?,;:])', r'\1', text)
+    
+    # Normalize line breaks
+    text = re.sub(r'\n\n\n+', '\n\n', text)
+    
+    #Capitalize after final dots.
+    text = re.sub(r'(\. )([a-z])', lambda m: m.group(1) + m.group(2).upper(), text)
+    
+    return text.strip()
 
 
 with open("data/eng/the_vampyre_ocr.json", "r") as f_ocr:
     ocr_data = json.load(f_ocr)
 
-# with open("data/eng/the_vampyre_clean.json", "r") as f_clean:
-#     clean_data = json.load(f_clean)
-
 max_token_input = 2000
 first_key = list(ocr_data.keys())[0]
 first_text = ocr_data[first_key]
-first_text = pre_clean_text(first_text)     #remove unicode codes
-chunks = split_text_by_token_estimate(first_text, max_tokens=max_token_input, chars_per_token=4)
 
-#answers
+print(f"📖 Elaborating : {first_key}")
+print(f"📏 Original length: {len(first_text)} chars")
+
+first_text = pre_clean_text(first_text) 
+print(f"📏 Length after pre-processing: {len(first_text)} chars")
+
+chunks = split_text_by_paragraphs(first_text, max_tokens=max_token_input, chars_per_token=4)
+print(f"🔪 Text split in {len(chunks)} chunks")
+
+# Processing chunks (mantiene la tua logica originale)
 cleaned_chunks = []
 
 for idx, chunk in enumerate(chunks):
@@ -115,29 +188,40 @@ for idx, chunk in enumerate(chunks):
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.3
+            "temperature": 0.1 #0.3. Low value increase consistency ?
         }
     )
 
+    # Debug output to see also resoning and other stuff from the model
+    print("Raw JSON response:")
+    print(json.dumps(response.json(), indent=2))
+
     result = response.json()["choices"][0]["message"]["content"].strip()
     cleaned_chunks.append(result)
-    print(f"✔️ Chunk {idx + 1}/{len(chunks)} done")
+    print(f"✔️ Chunk {idx + 1}/{len(chunks)} completato")
 
-# Combina i pezzi
-final_text = "\n".join(cleaned_chunks)
 
-# Salva il risultato
+final_text = "\n\n".join(cleaned_chunks)
+final_text = post_process_final_text(final_text)
+
+# Salva il risultato. Aggiungo più elementi per il debug e la tracciabilità
 output = {
     "id": first_key,
-    "ocr_text": first_text,
-    "cleaned_text": final_text
+    "original_ocr_text": ocr_data[first_key],
+    "preprocessed_text": first_text,
+    "cleaned_text": final_text,
+    "processing_info": {
+        "chunks_count": len(chunks),
+        "model_used": model_name
+    }
 }
 
-output_path = "results/deepseek_cleaned_chunked_v5.json"
 
+output_path = f"results/{output_path_model}/{output_path_model}_cleaned_optimized_{translation_version}.json"
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-with open(output_path, "w") as f:
-    json.dump(output, f, indent=2)
+with open(output_path, "w", encoding='utf-8') as f:
+    json.dump(output, f, indent=2, ensure_ascii=False)
 
-print(f"\n✅ Testo completo ripulito salvato in: {output_path}")
+print(f"\n✅ Elaboration completed!")
+print(f"📁 Saved in : {output_path}")
