@@ -3,83 +3,98 @@ import json
 from openai import OpenAI  
 import requests
 import os
-
-from ftfy import fix_text
-import unicodedata
 import re
 
 model_name = "deepseek/deepseek-r1-0528:free"
-output_path_model = "deepseek" #serve per la cartella e file di output
-translation_version = "v7"
+# model_name = "deepseek/deepseek-chat-v3-0324:free"
+       
+# model_name = "microsoft/phi-4-reasoning-plus:free"
+
+# model_name = "google/gemma-3-27b-it:free"
+# model_name = "google/gemini-2.0-flash-exp:free"
+
+# model_name = "opengvlab/internvl3-14b:free"
+
+# model_name = "meta-llama/llama-3.3-8b-instruct:free"
+# model_name = "meta-llama/llama-4-maverick:free" 
+# model_name = "meta-llama/llama-4-scout:free"
+
+# model_name = "qwen/qwen-2.5-coder-32b-instruct:free"
+# model_name = "qwen/qwen-2.5-72b-instruct:free"
+# model_name = "qwen/qwen-2.5-7b-instruct:free"
+# model_name = "qwen/qwen-2.5-vl-7b-instruct:free"
+
+# model_name = "nousresearch/deephermes-3-mistral-24b-preview:free" 
+# model_name = "mistralai/mistral-nemo:free"
+# model_name = "cognitivecomputations/dolphin3.0-mistral-24b:free"
+# model_name = "mistralai/mistralai/devstral-small:free"
+
+output_path_model = model_name.split("/")[1].split(":")[0]
+translation_version = "v2"
 
 PROMPT_TEMPLATE = """You are an expert OCR text restoration specialist. Your task is to fix OCR scanning errors while preserving the original text's integrity.
 
-COMMON OCR ERRORS TO FIX:
-• Character substitutions: O↔0, l↔1↔I, rn↔m, vv↔w, cl↔d, nn↔m, ci↔d
-• Broken words: "th is" → "this", "a nd" → "and", "w ord" → "word"  
-• Missing/extra spaces: "inthe" → "in the", "text .But" → "text. But"
-• Quote artifacts: \" → " (fix escaped quotes to normal quotes)
-• Case errors: random capitalization, missing capitals after periods
-• Artifacts: remove stray | ~ ` symbols and Unicode remnants
+STEP 1 - PRE-PROCESSING FIXES:
+• Fix Unicode artifacts and ligatures: ﬁ→fi, ﬂ→fl, ﬀ→ff, ﬃ→ffi, ﬄ→ffl
+• Normalize quotes: ''→', ""→", «»→""
+• Fix escaped quotes: \"→" (but preserve em-dashes —)
+• Remove control characters and garbage: |~` and similar artifacts
+• Normalize horizontal spacing: multiple spaces/tabs → single space
+• Limit consecutive line breaks to maximum 2
 
-PUNCTUATION PRESERVATION:
-• Keep em-dashes (—) as they are typical of 19th century literature
-• Fix only quote encoding errors: \"text\" → "text"
-• Preserve original dialogue formatting and complex punctuation patterns
+STEP 2 - MAIN OCR CORRECTIONS:
+• Character substitutions: O↔0, l↔1↔I, rn↔m, vv↔w, cl↔d, nn↔m, ci↔d
+• Broken words: "th is"→"this", "a nd"→"and", "w ord"→"word", "0f"→"of"
+• Missing/extra spaces: "inthe"→"in the", "text.But"→"text. But"
+• Case errors: random capitalization, missing capitals after periods
+• Common word patterns: "0r"→"or", "f0r"→"for", "t0"→"to", "h0use"→"house"
+
+STEP 3 - POST-PROCESSING REFINEMENT:
+• Ensure single space after punctuation: "word.Another"→"word. Another"
+• Fix spaces before punctuation: "word ."→"word."
+• Capitalize after sentence endings: ". word"→". Word"
+• Normalize excessive line breaks: 3+ newlines → 2 newlines maximum
+
+LITERARY TEXT PRESERVATION:
+• Keep em-dashes (—) intact - typical of 19th century literature
+• Preserve dialogue formatting and complex punctuation patterns
+• Maintain original paragraph structure and line breaks
+• Keep archaic spelling if not clearly OCR error (e.g., "colour", "honour")
 
 CORRECTION EXAMPLES:
-"Th e qu ick br0wn f0x jvmps 0ver the |azy d0g." → "The quick brown fox jumps over the lazy dog."
-"lt was a dark st0rmy night.Sudcenly a sh0t rang 0ut!" → "It was a dark stormy night. Suddenly a shot rang out!"
-"The p0em 0f \"Thalaba,\" the vampyre c0rse" → "The poem of "Thalaba," the vampyre corse"
-"affecti0n.—A supp0siti0n alluded t0" → "affection.—A supposition alluded to"
+Input: "Th e qu ick br0wn f0x jvmps 0ver the |azy d0g ."
+Output: "The quick brown fox jumps over the lazy dog."
+
+Input: "lt was a dark st0rmy night.sudcenly a sh0t rang 0ut !"
+Output: "It was a dark stormy night. Suddenly a shot rang out!"
+
+Input: "The p0em 0f \"Thalaba ,\" the vampyre c0rse 0f"
+Output: "The poem of "Thalaba," the vampyre corse of"
+
+Input: "affecti0n.—A supp0siti0n alluded t0 in the text .but"
+Output: "affection.—A supposition alluded to in the text. But"
+
+Input: "he cried ,\"again baffled !\" t0 which a l0ud laugh"
+Output: "he cried, "Again baffled!" to which a loud laugh"
+
+PROCESSING STEPS TO FOLLOW:
+1. Apply pre-processing fixes (Unicode, ligatures, spacing)
+2. Correct OCR character errors and broken words
+3. Apply post-processing refinement (punctuation spacing, capitalization)
+4. Preserve literary formatting (em-dashes, dialogue structure)
 
 STRICT RULES:
-1. Fix ONLY obvious OCR errors - do NOT modernize, paraphrase, or interpret
-2. Preserve original grammar, vocabulary, and sentence structure exactly
-3. Maintain paragraph breaks and text formatting
-4. Keep em-dashes (—) and period-style literary punctuation intact
-5. Fix quote encoding (\" → ") but preserve quote placement and dialogue structure
-6. If uncertain about a correction, leave the text unchanged
-7. Output ONLY the corrected text with no explanations
+• Fix ONLY obvious OCR errors - do NOT modernize, paraphrase, or interpret
+• Preserve original grammar, vocabulary, and sentence structure exactly
+• Maintain paragraph breaks and text formatting
+• If uncertain about a correction, leave the text unchanged
+• Output ONLY the corrected text with no explanations or formatting
 
 OCR text:
 {input_text}
 
 Cleaned text:
 """
-
-def pre_clean_text(text):
-    # fix Unicode errors (quotes, dashes, accents)
-    text = fix_text(text)
-
-    # normalize Unicode
-    text = unicodedata.normalize("NFKD", text)
-    
-    # fix common OCR artifacts before LLM processing. TOCHECK: Maybe some of them must be keeped ?
-    ocr_replacements = {
-        # Ligatures comuni
-        'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl',
-        # Quote standardization
-        ''': "'", ''': "'", '"': '"', '"': '"',
-        '«': '"', '»': '"',
-        # Dashes
-        '–': '-', '—': '-', '…': '...',
-    }
-    
-    for old, new in ocr_replacements.items():
-        text = text.replace(old, new)
-
-    # remove control characters but keep the line breaks
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
-    
-    # clean up garbage patterns
-    text = re.sub(r"[^\w\s.,;:'\"!?()\[\]\-]", "", text)
-
-    # normalize spacing 
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)  # Max 2 consecutive newlines
-
-    return text.strip()
 
 def load_api_key(path="key.txt"):
     with open(path, "r") as f:
@@ -137,23 +152,6 @@ def split_text_by_paragraphs(text, max_tokens, chars_per_token=4):
     
     return chunks
 
-def post_process_final_text(text):
-    """Post-processing per migliorare la coerenza finale"""
-    #normalize spaces after punctuation
-    text = re.sub(r'([.!?])\s*([A-Z])', r'\1 \2', text)
-    text = re.sub(r'([,;:])\s*([a-zA-Z])', r'\1 \2', text)
-    
-    #fix spaces before punctuation
-    text = re.sub(r'\s+([.!?,;:])', r'\1', text)
-    
-    # Normalize line breaks
-    text = re.sub(r'\n\n\n+', '\n\n', text)
-    
-    #Capitalize after final dots.
-    text = re.sub(r'(\. )([a-z])', lambda m: m.group(1) + m.group(2).upper(), text)
-    
-    return text.strip()
-
 
 with open("data/eng/the_vampyre_ocr.json", "r") as f_ocr:
     ocr_data = json.load(f_ocr)
@@ -162,11 +160,9 @@ max_token_input = 2000
 first_key = list(ocr_data.keys())[0]
 first_text = ocr_data[first_key]
 
-print(f"📖 Elaborating : {first_key}")
-print(f"📏 Original length: {len(first_text)} chars")
-
-first_text = pre_clean_text(first_text) 
-print(f"📏 Length after pre-processing: {len(first_text)} chars")
+print("\n ====================== \n🔍 Starting text cleaning process")
+print("🔧 Model used for processing:", model_name)
+print(f"📖 Elaborating text with ID: {first_key} ")
 
 chunks = split_text_by_paragraphs(first_text, max_tokens=max_token_input, chars_per_token=4)
 print(f"🔪 Text split in {len(chunks)} chunks")
@@ -202,13 +198,11 @@ for idx, chunk in enumerate(chunks):
 
 
 final_text = "\n\n".join(cleaned_chunks)
-final_text = post_process_final_text(final_text)
 
 # Salva il risultato. Aggiungo più elementi per il debug e la tracciabilità
 output = {
     "id": first_key,
     "original_ocr_text": ocr_data[first_key],
-    "preprocessed_text": first_text,
     "cleaned_text": final_text,
     "processing_info": {
         "chunks_count": len(chunks),
