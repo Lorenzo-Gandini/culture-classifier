@@ -5,13 +5,13 @@ import requests
 import os
 import re
 
-model_name = "deepseek/deepseek-r1-0528:free"
-# model_name = "deepseek/deepseek-chat-v3-0324:free"
-       
-# model_name = "microsoft/phi-4-reasoning-plus:free"
+# model_name = "google/gemma-3-27b-it:free" This model doesn't work with the structure of the prompt.
 
-# model_name = "google/gemma-3-27b-it:free"
-# model_name = "google/gemini-2.0-flash-exp:free"
+
+# model_name = "google/gemini-2.0-flash-exp:free"     # Always busy
+
+# model_name = "deepseek/deepseek-r1-0528:free"
+# model_name = "deepseek/deepseek-chat-v3-0324:free"
 
 # model_name = "opengvlab/internvl3-14b:free"
 
@@ -26,11 +26,11 @@ model_name = "deepseek/deepseek-r1-0528:free"
 
 # model_name = "nousresearch/deephermes-3-mistral-24b-preview:free" 
 # model_name = "mistralai/mistral-nemo:free"
-# model_name = "cognitivecomputations/dolphin3.0-mistral-24b:free"
+model_name = "cognitivecomputations/dolphin3.0-mistral-24b:free"
 # model_name = "mistralai/mistralai/devstral-small:free"
 
 output_path_model = model_name.split("/")[1].split(":")[0]
-translation_version = "v2"
+translation_version = "v3"
 
 PROMPT_TEMPLATE = """You are an expert OCR text restoration specialist. Your task is to fix OCR scanning errors while preserving the original text's integrity.
 
@@ -48,6 +48,9 @@ STEP 2 - MAIN OCR CORRECTIONS:
 • Missing/extra spaces: "inthe"→"in the", "text.But"→"text. But"
 • Case errors: random capitalization, missing capitals after periods
 • Common word patterns: "0r"→"or", "f0r"→"for", "t0"→"to", "h0use"→"house"
+• Additional character corrections: 
+  "tbe"→"the", "lhe"→"the", "af"→"of", "arid"→"and", "beclrd"→"declared", 
+  "tho"→"the", "rn"→"m", "tbat"→"that", "tbis"→"this", "hls"/"hiſ"/"bis"→"his"
 
 STEP 3 - POST-PROCESSING REFINEMENT:
 • Ensure single space after punctuation: "word.Another"→"word. Another"
@@ -77,6 +80,10 @@ Output: "affection.—A supposition alluded to in the text. But"
 Input: "he cried ,\"again baffled !\" t0 which a l0ud laugh"
 Output: "he cried, "Again baffled!" to which a loud laugh"
 
+Input: "He gazed up0n the mirth arourid him, as if he couId not partielpate therein."
+Output: "He gazed upon the mirth around him, as if he could not participate therein."
+
+
 PROCESSING STEPS TO FOLLOW:
 1. Apply pre-processing fixes (Unicode, ligatures, spacing)
 2. Correct OCR character errors and broken words
@@ -87,8 +94,9 @@ STRICT RULES:
 • Fix ONLY obvious OCR errors - do NOT modernize, paraphrase, or interpret
 • Preserve original grammar, vocabulary, and sentence structure exactly
 • Maintain paragraph breaks and text formatting
-• If uncertain about a correction, leave the text unchanged
+• NEVER guess or fill in missing information: if a word is unclear or partially corrupted and no confident correction exists, do NOT invent or rephrase—leave it as-is.
 • Output ONLY the corrected text with no explanations or formatting
+• Do NOT simplify, summarize, or rewrite any sentence. The structure and rhythm of the original prose must remain untouched.
 
 OCR text:
 {input_text}
@@ -96,7 +104,7 @@ OCR text:
 Cleaned text:
 """
 
-def load_api_key(path="key.txt"):
+def load_api_key(path="key_fl.txt"):
     with open(path, "r") as f:
         return f.read().strip()
 
@@ -189,8 +197,17 @@ for idx, chunk in enumerate(chunks):
     )
 
     # Debug output to see also resoning and other stuff from the model
-    print("Raw JSON response:")
-    print(json.dumps(response.json(), indent=2))
+    print("🔍 Raw response received:")
+    try:
+        json_data = response.json()
+        print(json.dumps(json_data, indent=2))
+    except json.decoder.JSONDecodeError:
+        print("❌ La risposta NON è in formato JSON.")
+        print("📄 Contenuto raw:")
+        print(response.text)
+
+    print(f"📡 HTTP status: {response.status_code}")
+
 
     result = response.json()["choices"][0]["message"]["content"].strip()
     cleaned_chunks.append(result)
