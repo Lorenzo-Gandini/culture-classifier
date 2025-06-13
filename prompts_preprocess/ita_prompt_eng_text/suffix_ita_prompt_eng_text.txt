@@ -1,0 +1,5 @@
+ : riscrivi correttamente il testo inglese estratto automaticamente da immagine.
+ : correggi gli errori presenti nel testo inglese derivante da riconoscimento automatico.
+ : riscrivi il testo inglese ottenuto tramite estrazione automatica da immagine in modo chiaro e corretto.
+ : correggi il testo inglese prodotto da trascrizione automatica da immagine sopra riportato.
+ : riscrivi il testo inglese precedente, estratto automaticamente, eliminando gli errori.
