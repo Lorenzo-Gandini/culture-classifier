@@ -2,3 +2,6 @@ ocr_cleaning_env
 key.txt
 key_gh.txt
 results/deepseek/initial_tests_ignore
+log/*
+wandb/* 
+__pycache__/*
