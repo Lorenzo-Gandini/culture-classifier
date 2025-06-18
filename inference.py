@@ -6,6 +6,7 @@ from tqdm import tqdm
 from ocr_dataset import retrieve_datasets
 import editdistance
 import time
+import os 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate fine-tuned model")
@@ -166,7 +167,8 @@ def main():
             "detailed_results": results
         }
         
-        with open(args.output_path, "w", encoding="utf-8") as f:
+        output_path = os.path.join(args.output_path, "inference.json")
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
         
         print(f"Results saved to {args.output_path}")

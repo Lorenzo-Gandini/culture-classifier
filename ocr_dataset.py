@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import torch 
 
 class OCRDataset(Dataset):
-    def __init__(self, data, tokenizer, max_length = 4096):
+    def __init__(self, data, tokenizer, max_length=4096):
         super().__init__()
         self.dataset = data  # Each item should be a (prompt, target) tuple
         self.tokenizer = tokenizer
@@ -15,64 +15,37 @@ class OCRDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
-        prompt = self.dataset[index][0]
-        target = self.dataset[index][1]
+        prompt, target = self.dataset[index]
 
+        # Manually construct the full text input (no chat template)
+        full_text = f"<|user|>\n{prompt}\n<|assistant|>\n{target}"
 
-        chat = [{"role": "user", "content": prompt},
-                {"role": "assistant", "content": target}]
-        
+        # Tokenize full input
+        enc = self.tokenizer(
+            full_text,
+            return_tensors="pt",
+            max_length=self.max_length,
+            truncation=True,
+            padding="max_length"
+        )
 
-        enc = self.tokenizer.apply_chat_template(conversation=chat, 
-                                                 tokenize=True,
-                                                 add_generation_prompt=True,
-                                                 return_tensors="pt",
-                                                 padding="max_length",
-                                                 max_length=self.max_length,
-                                                 return_dict = True)
-        
-        
         input_ids = enc["input_ids"].squeeze(0)
         attention_mask = enc["attention_mask"].squeeze(0)
-        
-        # Find where the assistant response starts
-        assistant_token = self.tokenizer.encode("[INST]", add_special_tokens=False)[0]
-        # Create labels
+
+        # Re-tokenize just the prompt portion to determine where labels should start
+        prompt_only = f"<|user|>\n{prompt}\n<|assistant|>\n"
+        prompt_len = len(self.tokenizer(prompt_only, add_special_tokens=False)["input_ids"])
+
+        # Prepare labels
         labels = input_ids.clone()
-        
-            # Tokenize the full special assistant start sequence
-        assistant_start_seq = "<|eot_id|><|start_header_id|> assistant<|end_header_id|>"
-        assistant_start_ids = self.tokenizer.encode(assistant_start_seq, add_special_tokens=False)
-        assistant_start_ids = torch.tensor(assistant_start_ids, device=input_ids.device)
-
-        # Find the start position of this subsequence inside input_ids
-        assistant_pos = find_subsequence(input_ids, assistant_start_ids)
-
-        if assistant_pos >= 0:
-            # Mask everything up to and including the assistant start token sequence
-            labels[:assistant_pos + len(assistant_start_ids)] = -100
-            labels[attention_mask == 0] = -100
-        else:
-            # Fallback: mask everything (should not happen)
-            labels[:] = -100
+        labels[:prompt_len] = -100  # Mask prompt tokens
+        labels[attention_mask == 0] = -100  # Mask padding tokens
 
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels
         }
-
-def find_subsequence(sequence, subsequence):
-    """
-    Find the first occurrence of subsequence in sequence.
-    Returns the start index or -1 if not found.
-    """
-    seq_len = len(sequence)
-    sub_len = len(subsequence)
-    for i in range(seq_len - sub_len + 1):
-        if torch.equal(sequence[i:i+sub_len], subsequence):
-            return i
-    return -1
 
 
 def retrieve_datasets(path, test_size = 0.1, random_state=42):

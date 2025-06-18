@@ -17,12 +17,12 @@ def main(model_path, dataset_path, output_file):
     print("Loading pre-trained model for DeepSpeed training")
     
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    
+    tokenizer.pad_token = tokenizer.eos_token
+
     # Load model normally - DeepSpeed will handle distribution
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
-        # Don't use device_map with DeepSpeed
         # device_map=None,
     )
     
@@ -51,11 +51,6 @@ def main(model_path, dataset_path, output_file):
         push_to_hub=False,
         log_level="info",
         bf16=True,
-        # DeepSpeed configuration
-        deepspeed="deepspeed_config.json",  # Path to DeepSpeed config
-        gradient_checkpointing=True,
-        dataloader_pin_memory=False,
-        remove_unused_columns=False,
     )
     
     trainer = Trainer(
