@@ -53,26 +53,22 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
         torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True
+        low_cpu_mem_usage=True,
+        device_map="auto"  # Automatically handle GPU placement
     )
-    
-        # Initialize DeepSpeed inference engine
-    ds_engine = deepspeed.init_inference(
-        model=model,
-        mp_size=1,
-        dtype=torch.bfloat16,
-        replace_method='auto',
-        replace_with_kernel_inject=True,
-        config=args.deepspeed_config_path
+
+    train_data, test_data = retrieve_datasets(args.dataset_path, test_size=0.5)
+
+    # Create pipeline - much simpler!
+    pipe = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer,
+        torch_dtype=torch.bfloat16,
+        device_map="auto"
     )
-    model = ds_engine.module
 
-    train_data, test_data = retrieve_datasets(args.dataset_path)
-
-    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
-
-    
-    # Metrics
+    # Rest of your code stays the same...
     def cer(s1, s2):
         return editdistance.eval(s1, s2) / max(len(s2), 1)
 
@@ -88,31 +84,30 @@ def main():
     with torch.no_grad(), open(output_path, "w", encoding="utf-8") as f:
         for (noisy, clean) in tqdm(test_data):
             
-            output = pipe(noisy)
-
+            # Add generation parameters for better control
+            output = pipe(
+                noisy, 
+                max_new_tokens=512, 
+                do_sample=False,  # Deterministic generation
+                pad_token_id=tokenizer.eos_token_id,  # Handle padding
+                return_full_text=False  # Only return generated part, not input
+            )
             output = output[0]["generated_text"]
-
+            
             total_cer += cer(output, clean)
             total_wer += wer(output, clean)
             n += 1
-
-            # Save prediction and target to file
+            
             f.write(f"Sample {n}:\n")
             f.write(f"Ground truth: {clean}\n")
             f.write(f"Prediction  : {output}\n")
             f.write(f"CER: {cer(output, clean):.3f}, WER: {wer(output, clean):.3f}\n\n")
-
-            # Optional: Also print the first 5
-            if n <= 2:
-                print(f"\n🔹 Ground truth: {clean}")
-                print(f"🔸 Prediction  : {output}")
-
+        
         avg_cer = total_cer / n
         avg_wer = total_wer / n
-
+        
         f.write(f"\n✅ Average CER: {avg_cer:.3f}\n")
         f.write(f"✅ Average WER: {avg_wer:.3f}\n")
-
 
 if __name__ == "__main__":
     main()

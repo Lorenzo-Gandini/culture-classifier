@@ -1,0 +1,2 @@
+srun accelerate launch --multi_gpu fine_tuning.py --output_path $HOME/minerva-ocr --model_path $HOME/minerva-7b --dataset_path ./data_preprocessed/eng
+srun accelerate launch --multi_gpu inference.py --model_path $HOME/minerva-ocr --output_path ./inference/ --dataset_path ./data_preprocessed/eng --deepspeed_config_path ./deepspeed_inference.json
