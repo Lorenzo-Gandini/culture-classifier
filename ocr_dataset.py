@@ -2,9 +2,8 @@ from torch.utils.data.dataset import Dataset
 import os 
 import json 
 from sklearn.model_selection import train_test_split
+import torch 
 
-
-   
 class OCRDataset(Dataset):
     def __init__(self, data, tokenizer, max_length = 4096):
         super().__init__()
@@ -19,46 +18,62 @@ class OCRDataset(Dataset):
         prompt = self.dataset[index][0]
         target = self.dataset[index][1]
 
-            # Create the full conversation
-        full_text = f"<|user|> {prompt}\n<|assistant|> {target}"
+
+        chat = [{"role": "user", "content": prompt},
+                {"role": "assistant", "content": target}]
         
-        # Tokenize full sequence
-        enc = self.tokenizer(
-            full_text,
-            truncation=True,
-            max_length=self.max_length,
-            padding="max_length",
-            return_tensors="pt"
-        )
+
+        enc = self.tokenizer.apply_chat_template(conversation=chat, 
+                                                 tokenize=True,
+                                                 add_generation_prompt=True,
+                                                 return_tensors="pt",
+                                                 padding="max_length",
+                                                 max_length=self.max_length,
+                                                 return_dict = True)
+        
         
         input_ids = enc["input_ids"].squeeze(0)
         attention_mask = enc["attention_mask"].squeeze(0)
         
         # Find where the assistant response starts
-        assistant_token = self.tokenizer.encode("<|assistant|>", add_special_tokens=False)[0]
-        
+        assistant_token = self.tokenizer.encode("[INST]", add_special_tokens=False)[0]
         # Create labels
         labels = input_ids.clone()
         
-        # Find the position where assistant token appears
-        assistant_positions = (input_ids == assistant_token).nonzero(as_tuple=True)[0]
-        
-        if len(assistant_positions) > 0:
-            # Mask everything up to and including the assistant token
-            assistant_pos = assistant_positions[0]
-            labels[:assistant_pos + 1] = -100
-            
-            # Also mask any padding tokens
+            # Tokenize the full special assistant start sequence
+        assistant_start_seq = "<|eot_id|><|start_header_id|> assistant<|end_header_id|>"
+        assistant_start_ids = self.tokenizer.encode(assistant_start_seq, add_special_tokens=False)
+        assistant_start_ids = torch.tensor(assistant_start_ids, device=input_ids.device)
+
+        # Find the start position of this subsequence inside input_ids
+        assistant_pos = find_subsequence(input_ids, assistant_start_ids)
+
+        if assistant_pos >= 0:
+            # Mask everything up to and including the assistant start token sequence
+            labels[:assistant_pos + len(assistant_start_ids)] = -100
             labels[attention_mask == 0] = -100
         else:
-            # Fallback: mask everything (shouldn't happen with proper data)
+            # Fallback: mask everything (should not happen)
             labels[:] = -100
-        
+
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels
         }
+
+def find_subsequence(sequence, subsequence):
+    """
+    Find the first occurrence of subsequence in sequence.
+    Returns the start index or -1 if not found.
+    """
+    seq_len = len(sequence)
+    sub_len = len(subsequence)
+    for i in range(seq_len - sub_len + 1):
+        if torch.equal(sequence[i:i+sub_len], subsequence):
+            return i
+    return -1
+
 
 def retrieve_datasets(path, test_size = 0.1, random_state=42):
     
@@ -81,7 +96,6 @@ def retrieve_datasets(path, test_size = 0.1, random_state=42):
 
     keys = sorted(int(k) for k in clean_file.keys())
     paired_data = [(noisy_file[str(k)], clean_file[str(k)]) for k in keys]
-
 
     train_data, test_data = train_test_split(paired_data, test_size=test_size, random_state=random_state)
     return train_data, test_data
@@ -114,7 +128,7 @@ if __name__ == "__main__":
     # Decode input_ids and labels for inspection
     input_text = tokenizer.decode(sample["input_ids"], skip_special_tokens=False)
     labels = sample["labels"].tolist()
-
+    
     # To decode labels, mask out -100 tokens
     label_tokens = [id if id != -100 else tokenizer.pad_token_id for id in labels]
     label_text = tokenizer.decode(label_tokens, skip_special_tokens=False)

@@ -66,8 +66,6 @@ def main(model_path, dataset_path, output_file):
         processing_class=tokenizer,
     )
     
-
-
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     logger = logging.getLogger()
     
