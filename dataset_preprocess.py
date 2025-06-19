@@ -196,7 +196,9 @@ def save_files(responses, inputs, path):
     noisy_path = os.path.join(path, "noisy.json")
     clean_path = os.path.join(path, "clean.json")
 
+    
     with open(noisy_path, "w+") as f:
+        print(inputs)
         json.dump(inputs, f)
     
     with open(clean_path, "w+") as f:

@@ -11,17 +11,26 @@
 #SBATCH --output=./log/inference_%j.out
 #SBATCH --account=try25_navigli
 
-module load cuda/12.3  # example, adjust accordingly
-module load profile/deeplrn  # or the python module you need
+module purge
+module load cuda/12.3
+module load profile/deeplrn
 
-# Activate your environment if you use one
-source $HOME/.env/bin/activate
+# Configuration - modify these paths as needed
+MODEL_PATH="/path/to/your/fine_tuned_model"
+DATASET_PATH="/path/to/your/dataset"
+OUTPUT_DIR="evaluation_results_$(date +%Y%m%d_%H%M%S)"
+MAX_NEW_TOKENS=100
+MAX_SAMPLES=""  # Leave empty for all samples, or set a number like 1000
 
-# Run the evaluation script with arguments
-srun python inference.py \
-    --model_path $HOME/minerva-ocr \
+# Optional parameters
+VERBOSE="--verbose"  # Remove to disable verbose logging
+
+# Run the evaluation
+python inference.py \
+    --model_path $HOME/minerva-350m \
     --dataset_path ./data_preprocessed/eng \
-    --output_path ./inference/ \
-    --max_new_tokens 100 \
-    --batch_size 4 \
-    --test_samples 100
+    --output_dir ./inference \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    $MAX_SAMPLES_ARG \
+    $VERBOSE
+

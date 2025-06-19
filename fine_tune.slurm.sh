@@ -10,7 +10,7 @@
 #SBATCH --error=./log/fine_tune_%j.err
 #SBATCH --output=./log/fine_tune_%j.out
 #SBATCH --account=try25_navigli
-# Load modules if necessary
+
 module purge
 module load cuda/12.3
 module load profile/deeplrn
@@ -19,7 +19,7 @@ module load profile/deeplrn
 source $HOME/.env/bin/activate  # or conda activate
 
 # Run the script
-srun python fine_tuning.py \
+python fine_tuning.py \
     --model_path $HOME/minerva-350m \
     --output_path $HOME/minerva-ocr \
     --dataset_path ./data_preprocessed/eng

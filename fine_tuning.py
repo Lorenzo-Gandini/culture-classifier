@@ -14,7 +14,7 @@ from ocr_dataset import retrieve_datasets, OCRDataset
 os.environ["WANDB_DISABLED"] = "true"
 
 def main(model_path, dataset_path, output_file):
-    print("Loading pre-trained model for DeepSpeed training")
+    print("Loading pre-trained model")
     
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     tokenizer.pad_token = tokenizer.eos_token
@@ -23,7 +23,6 @@ def main(model_path, dataset_path, output_file):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
-        # device_map=None,
     )
     
     train_data, test_data = retrieve_datasets(path=dataset_path)
@@ -34,9 +33,9 @@ def main(model_path, dataset_path, output_file):
     
     training_args = TrainingArguments(
         output_dir=output_file,
-        per_device_train_batch_size=2,  # Can be larger with DeepSpeed
+        per_device_train_batch_size=4, 
         gradient_accumulation_steps=4,
-        num_train_epochs=20,
+        num_train_epochs=50,
         eval_strategy="steps",
         eval_steps=100,
         load_best_model_at_end=False,
@@ -47,7 +46,6 @@ def main(model_path, dataset_path, output_file):
         warmup_steps=2000,
         weight_decay=0.1,
         lr_scheduler_type="cosine",
-        run_name="minerva-ocr-ft",
         push_to_hub=False,
         log_level="info",
         bf16=True,
